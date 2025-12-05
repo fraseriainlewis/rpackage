@@ -1,0 +1,4 @@
+library(rstanarm)
+data(roaches)
+roaches$roach1 <- roaches$roach1 / 100
+rescaled_sd<-c(2.5,2.5,2.5)

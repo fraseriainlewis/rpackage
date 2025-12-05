@@ -1,0 +1,1 @@
+alpha + beta_roach1 * roach_data +beta_treatment * trt_data +beta_senior * snr_data +log(exposure_data)

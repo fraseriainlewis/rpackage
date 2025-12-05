@@ -1,0 +1,10 @@
+
+tfp.mcmc.sample_chain(
+      kernel=adaptive_sampler,
+      current_state=[tf.constant(1.0,dtype = tf.float32),
+                     tf.constant(1.0,dtype = tf.float32),
+                     tf.constant(1.0,dtype = tf.float32),
+                     tf.constant(1.0,dtype = tf.float32),
+                     tf.constant(1.0,dtype = tf.float32)],
+      num_results=num_results,
+      num_burnin_steps=num_burnin_steps)
