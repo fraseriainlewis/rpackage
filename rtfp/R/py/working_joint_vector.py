@@ -9,39 +9,56 @@ import time
 data=pd.read_csv('roaches.csv')
 data.roach1=data.roach1/100;# manual fix special case - should be done in passed data
 
-if(False):
-    roach_data=tf.convert_to_tensor(roaches.roach1/100, dtype = tf.float32)
-    trt_data=tf.convert_to_tensor(roaches.treatment, dtype = tf.float32)
-    snr_data=tf.convert_to_tensor(roaches.senior, dtype = tf.float32)
-    exposure_data=tf.convert_to_tensor(roaches.exposure2, dtype = tf.float32)
-    y_data=tf.convert_to_tensor(roaches.y, dtype = tf.float32)
+rows, columns = data.shape
 
 y_data=tf.convert_to_tensor(data.iloc[:,0], dtype = tf.float32)
 roach_data=tf.convert_to_tensor(data.iloc[:,1], dtype = tf.float32)
 trt_data=tf.convert_to_tensor(data.iloc[:,2], dtype = tf.float32)
 snr_data=tf.convert_to_tensor(data.iloc[:,3], dtype = tf.float32)
-exposure_data=tf.convert_to_tensor(data.iloc[:,4], dtype = tf.float32)
-    
+
+X=tf.convert_to_tensor(data.iloc[:,[1,2,3]],dtype=tf.float32)
+X=tf.concat([tf.ones([rows,1],dtype=tf.float32), X], axis=1)
+
+exposure_data=tf.math.log(tf.expand_dims(tf.convert_to_tensor(data.iloc[:,4],dtype=tf.float32),axis=-1))
+#print(exposure_data)
+X=tf.concat([X,exposure_data], axis=1)
+
+
+beta_expos=tf.convert_to_tensor(1.0,dtype=tf.float32) # dummy
+
+#print(f"This is the design matrix {X}")
+#print(f"This is the expo dummy {beta_expos}")
+#exit(1)
 
 def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
     """Function to create the observed Normal distribution."""
-    alpha_expanded = tf.expand_dims(alpha, -1)  # (3, 1)
-    beta_roach_expanded = tf.expand_dims(beta_roach, -1)    # (3, 1)
-    beta_treatment_expanded = tf.expand_dims(beta_treatment, -1)    # (3, 1)
-    beta_senior_expanded = tf.expand_dims(beta_senior, -1)    # (3, 1)
-    beta_expos_expanded = tf.expand_dims(1.0, -1)
+    #alpha_e = tf.expand_dims(alpha, -1)  # (3, 1)
+    #beta_roach_e = tf.expand_dims(beta_roach, -1)    # (3, 1)
+    #beta_treatment_e = tf.expand_dims(beta_treatment, -1)    # (3, 1)
+    #beta_senior_e = tf.expand_dims(beta_senior, -1)    # (3, 1)
+    #beta_expos_expanded = tf.expand_dims(1.0, -1)
+    B=tf.stack([alpha,beta_roach,beta_treatment,beta_senior,beta_expos])
+    #print(B._shape_as_list())
+    logmu=tf.linalg.matvec(X,B) 
+    
+    #logmu = alpha_expanded + beta_roach_expanded * roach_data + beta_treatment_expanded * trt_data + beta_senior_expanded * snr_data +tf.math.log(exposure_data)
 
-    logmu = alpha_expanded + beta_roach_expanded * roach_data + beta_treatment_expanded * trt_data + beta_senior_expanded * snr_data +tf.math.log(exposure_data)
+    # Add intercept column (column of ones)
+    #ones = tf.ones([n_samples, 1])
+    #X_with_intercept = tf.concat([ones, X], axis=1)  # Shape: [100, 3]
+    #true_params = tf.concat([[true_intercept], true_beta], axis=0)  # Shape: [3]
+    #linear_predictor = tf.linalg.matvec(X_with_intercept, true_params)  # Matrix-vector multiply
 
+    #print(f"this is logmu={logmu}")
     phi_expanded = tf.expand_dims(phi, -1)  # (3, 1)
     mu = tf.math.exp(logmu)
     #r = tf$expand_dims(1.0, -1L)/ phi_expanded;  # total_count = 5
     #probs <- r / (r + mu)
 
     prob = phi_expanded/(phi_expanded+mu)
-    #print(f"this is prob={prob}")
     #prob<-(phi_expanded)/(mu+phi_expanded)
     # Create distribution for observations
+    #print(f"this is prob={prob}")
     return(tfd.Independent(
         #tfd_normal(loc = mu, scale = sigma_expanded),
         #mu = exp(mu)
@@ -56,7 +73,7 @@ def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
    
 
 # APPROACH 1. Define the joint distribution without matrix mult
-model = tfd.JointDistributionSequential([
+model = tfd.JointDistributionSequentialAutoBatched([
   tfd.Normal(loc=0., scale=5., name="alpha"),  # # Intercept (alpha)
   tfd.Normal(loc=0., scale=2.5, name="beta_roach"),  # # Slope (beta_roach1)
   tfd.Normal(loc=0., scale=2.5, name="beta_treatment"),  # # Intercept (alpha)
@@ -67,9 +84,6 @@ model = tfd.JointDistributionSequential([
 
 # Approach 1.
 tf.random.set_seed(9999)
-#a=model.sample()
-#print(model)
-#a=model.sample()
 
 def log_prob_fn(alpha, beta_roach,beta_treatment,beta_senior,phi):
   """Unnormalized target density as a function of states."""
@@ -93,7 +107,8 @@ start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)
 print(neg_log_prob_fn(start))  
 print(f" second example = {log_prob_fn(0.22,0.2,0.3,0.5,0.1)}")
 
-#exit(1)  
+#exit(1)   
+   
 #### get starting values by find MLE
 if(True):
     start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)  # Starting point for the search.
@@ -103,7 +118,7 @@ if(True):
     print(optim_results.initial_objective_values)
     print(optim_results.objective_value)
     print(optim_results.position)
-   
+
 #exit(1)   
 # bijector to map contrained parameters to real
 unconstraining_bijectors = [
@@ -131,9 +146,8 @@ adaptive_sampler = tfp.mcmc.DualAveragingStepSizeAdaptation(
 
 
 istate = optim_results.position
-#exit(1)
 #print(initial_state)
-
+#exit(1)
 print("here initial_state")
 #print(initial_state)
 
@@ -199,7 +213,7 @@ print(current_state)
 @tf.function(autograph=False, jit_compile=False)
 def do_sampling():
   return tfp.mcmc.sample_chain(
-      kernel=adaptive_sampler,
+      kernel=sampler,
       current_state=current_state,
       num_results=num_results,
       num_burnin_steps=num_burnin_steps,
