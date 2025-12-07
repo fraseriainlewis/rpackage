@@ -1,116 +1,7 @@
-# Hello, world!
-#
-# This is an example function named 'hello'
-# which prints 'Hello, world!'.
-#
-# You can learn more about package authoring with RStudio at:
-#
-#   https://r-pkgs.org
-#
-# Some useful keyboard shortcuts for package authoring:
-#
-#   Install Package:           'Cmd + Shift + B'
-#   Check Package:             'Cmd + Shift + E'
-#   Test Package:              'Cmd + Shift + T'
-
-.onLoad <- function(libname, pkgname) {
-  reticulate::py_require("tensorflow")
-  reticulate::py_require("tf_keras")
-  reticulate::py_require("tensorflow_probability")
-}
-
-#' Add together two numbers
-#'
-#' @returns The sum of `x` and `y`
-#' @export
-#' @examples
-#'
-#' test_call_to_tfd()
-test_call_to_tfd <- function() {
-  print("calling....\n")
-  return(tfd_bernoulli(probs=0.5)%>%tfd_sample(5L))
-}
-
-#' Add together two numbers
-#'
-#' @returns The sum of `x` and `y`
-#' @export
-#' @examples
-#'
-#' test_call_to_tfd()
-script_tfd <- function() {
-  print("calling....\n")
-  a<-10.0
-  py$a<-a
-  #loc_x<-x;
-  #assign("loc_x", loc_x, envir = .GlobalEnv)
-  #print(tfd_bernoulli(probs=0.5)%>%tfd_sample(5L))
-  mystring<-"
-import tensorflow as tf
-import tensorflow_probability as tfd
-
-print(a)
-#fromr= r.a
-#fromr2=r.roaches
-#print(type(r.roaches))
-#print(r.loc_x)
-#print(fromr)
-"
-  py_run_string(mystring)
-cat("got=",py$a,"\n")
-
-# Clean up global environment
-#rm(loc_x, envir = .GlobalEnv)
-
-}
-
-
-
-#' Fit Bayesian Negative Binomial Additive model using Tensorflow
-#'
-#' @description A short description here. See the example below, currently this function fits the same negative binomial regression model as given in the rstanarm example. The data set is passed and the rest of the function is currently hard coded to this example, using one of the tensorflow probability samplers. The function is written in python and called via reticulate which also brings the MCMC sample data into R. The code is simple starting point for expansion. The same function could be written in Rstudio tfprobability library, but needs considerable care on the broadcasting.
-#' @param thedata data.frame of the data to fit to the model - must be the dataset given in the example
-#' @returns a list of matrices of MCMC output, one member of the list for each estimated parameter, and each column in the matrix is the output of one chain. The number of columns in the matrix is the number of chains used. This is currently hardcoded. See function source.
-#' @examples
-#' \dontrun{
-#' library(rstanarm)
-#' data(roaches)
-#' roaches$roach1<-roaches$roach1/100;# manual
-#' samples<-glm_negbin(thedata=roaches)
-#' ## Trace plots for the reciprocal dispersion parameter
-#' phi_m<-samples[[5]] # the fifth parameter in the model, a matrix
-#' par(mfrow=c(2,2))
-#' plot(phi_m[,1],type="l",col="green",main="Trace plots")
-#' lines(phi_m[,2],col="blue")
-#' lines(phi_m[,3],col="skyblue")
-#' plot(phi_m[,1],type="l",col="green",main="Trace plots")
-#' plot(phi_m[,2],type="l",col="blue",main="Trace plots")
-#' plot(phi_m[,3],type="l",col="skyblue",main="Trace plots")
-#'
-#' ## Density plots and compare with rstanarm
-#' par(mfrow=c(1,1))
-#' plot(density(c(phi_m)),col="skyblue",lwd=2, main="rstanarm (orange) v TF (blue)",
-#' xlab="Reciprocal Dispersion") # all chains combined
-#'
-#' glm1 <- glm(y ~ roach1 + treatment + senior, offset = log(exposure2),
-#' data = roaches, family = poisson)
-#' stan_glm1 <- stan_glm(y ~ roach1 + treatment + senior, offset = log(exposure2),
-#'                       data = roaches, family = neg_binomial_2,
-#'                       prior = normal(0, 2.5),
-#'                       prior_intercept = normal(0, 5),
-#'                       seed = 12345,
-#'                       warmup = 10000,      # Number of warmup iterations per chain
-#'                       iter = 20000,        # Total iterations per chain (warmup + sampling)
-#'                       thin = 1,
-#'                       chains = 4)           # Thinning rate)
-#'  res_m<-as.matrix(stan_glm1)
-#'  lines(density(res_m[,"reciprocal_dispersion"]),col="orange",lwd=2)
-#'
-#'
-#' }
-
-#' @export
 glm_negbin<-function(thedata=NULL) {
+
+  #data_l=thedata # local copy inside frame otherwise python cant find it
+  #assign("data_l", data_l, envir = .GlobalEnv)
 
   py$data<-r_to_py(thedata) # this is needed as explicitly passes argument into py
   #print(thedata)
@@ -124,6 +15,8 @@ import numpy as np
 import pandas as pd
 import time
 
+#data=r.data_l
+
 rows, columns = data.shape
 
 y_data=tf.convert_to_tensor(data.iloc[:,0], dtype = tf.float32)
@@ -135,8 +28,9 @@ X=tf.convert_to_tensor(data.iloc[:,[1,2,3]],dtype=tf.float32)
 X=tf.concat([tf.ones([rows,1],dtype=tf.float32), X], axis=1)
 
 exposure_data=tf.math.log(tf.expand_dims(tf.convert_to_tensor(data.iloc[:,4],dtype=tf.float32),axis=-1))
-
+#print(exposure_data)
 X=tf.concat([X,exposure_data], axis=1)
+
 
 beta_expos=tf.convert_to_tensor(1.0,dtype=tf.float32) # dummy
 
@@ -174,7 +68,8 @@ def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
     ))
 
 
-# Define the joint distribution without matrix mult
+
+# APPROACH 1. Define the joint distribution without matrix mult
 model = tfd.JointDistributionSequentialAutoBatched([
   tfd.Normal(loc=0., scale=5., name="alpha"),  # # Intercept (alpha)
   tfd.Normal(loc=0., scale=2.5, name="beta_roach"),  # # Slope (beta_roach1)
@@ -184,7 +79,11 @@ model = tfd.JointDistributionSequentialAutoBatched([
   make_observed_dist
 ])
 
-tf.random.set_seed(99999)
+# Approach 1.
+tf.random.set_seed(9999)
+#a=model.sample()
+#print(model)
+#a=model.sample()
 
 def log_prob_fn(alpha, beta_roach,beta_treatment,beta_senior,phi):
   """Unnormalized target density as a function of states."""
@@ -202,9 +101,9 @@ def neg_log_prob_fn(pars):
       alpha, beta_roach,beta_treatment,beta_senior,phi, y_data))
 
 
-#print(log_prob_fn(0.1,0.2,0.3,0.5,0.1))
+print(log_prob_fn(0.1,0.2,0.3,0.5,0.1))
 start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)
-#print(neg_log_prob_fn(start))
+print(neg_log_prob_fn(start))
 
 #### get starting values by find MLE
 if(True):
@@ -212,9 +111,9 @@ if(True):
     optim_results = tfp.optimizer.nelder_mead_minimize(neg_log_prob_fn,
                  initial_vertex=start, func_tolerance=1e-04,max_iterations=1000)
 
-    #print(optim_results.initial_objective_values)
-    #print(optim_results.objective_value)
-    #print(optim_results.position)
+    print(optim_results.initial_objective_values)
+    print(optim_results.objective_value)
+    print(optim_results.position)
 
 # bijector to map contrained parameters to real
 unconstraining_bijectors = [
@@ -225,7 +124,7 @@ unconstraining_bijectors = [
     tfb.Exp()
 ]
 
-num_results=25000
+num_results=20000
 num_burnin_steps=5000
 
 sampler = tfp.mcmc.TransformedTransitionKernel(
@@ -240,7 +139,14 @@ adaptive_sampler = tfp.mcmc.DualAveragingStepSizeAdaptation(
     num_adaptation_steps=int(0.8 * num_burnin_steps),
     target_accept_prob=tf.cast(0.75, tf.float32))
 
+
 istate = optim_results.position
+#print(initial_state)
+
+print("here initial_state")
+#print(initial_state)
+
+#current_state=initial_state
 
 n_chains=3
 current_state = [tf.expand_dims(tf.repeat(istate[0],repeats=n_chains,axis=-1),axis=-1),
@@ -249,6 +155,41 @@ current_state = [tf.expand_dims(tf.repeat(istate[0],repeats=n_chains,axis=-1),ax
                  tf.expand_dims(tf.repeat(istate[3],repeats=n_chains,axis=-1),axis=-1),
                  tf.expand_dims(tf.repeat(istate[4],repeats=n_chains,axis=-1),axis=-1)
                  ]
+print("current state")
+print(current_state)
+# 3. Add a new dimension and then repeat
+# First, reshape from (3,) to (3, 1)
+#input_expanded = tf.expand_dims(initial_state, axis=-1)
+#print(f"Expanded Shape: {input_expanded.shape}\n") # Shape is (3, 1)
+
+# Now, repeat the values 3 times along the new last axis (axis=-1)
+#output_matrix = tf.repeat(input_expanded, repeats=1, axis=-1)
+
+#print("matrix")
+#print(output_matrix)
+#exit()
+
+
+
+
+
+#a=tf.constant([-0.01205934,  2.8705761, -0.5943442, 0.59550726, 0.0756483], dtype=tf.float32)
+
+#print("here current_state")
+#print(current_state)
+#print("here current_state2")
+#print(current_state2)
+#exit()
+
+#print(current_state)
+
+#initial_state = [tf.cast(x, tf.float32) for x in [1., 1., 1., 1., 1.]]
+
+#tfp.mcmc.sample_chain(
+#      kernel=adaptive_sampler,
+#      current_state=current_state,
+#      num_results=num_results,
+#      num_burnin_steps=num_burnin_steps)
 
 # Speed up sampling by tracing with `tf.function`.
 @tf.function(autograph=False, jit_compile=True,reduce_retracing=True)
@@ -269,13 +210,59 @@ print("Inference ran in {:.2f}s.".format(t1-t0))
 
 samples = list(map(lambda x: tf.squeeze(x).numpy(), samples))
 
+#print(samples)
+#print(kernel_results.shape)
+
 
 
 
 )"
 
+#print(py$data)
+
 py_run_string(bigstring)
 
 return(py_to_r(py$samples))
 }
+
+library(reticulate)
+library(rstanarm)
+data(roaches)
+roaches$roach1<-roaches$roach1/100;# manual
+samples<-glm_negbin(thedata=roaches)
+
+## Trace plots for the reciprocal dispersion parameter
+phi_m<-samples[[5]] # the fifth parameter in the model, a matrix
+par(mfrow=c(2,2))
+plot(phi_m[,1],type="l",col="green",main="Trace plots")
+lines(phi_m[,2],col="blue")
+lines(phi_m[,3],col="skyblue")
+
+plot(phi_m[,1],type="l",col="green",main="Trace plots")
+plot(phi_m[,2],type="l",col="blue",main="Trace plots")
+plot(phi_m[,3],type="l",col="skyblue",main="Trace plots")
+
+## Density plots and compare with rstanarm
+par(mfrow=c(1,1))
+plot(density(c(phi_m)),col="blue") # all chains combined
+
+glm1 <- glm(y ~ roach1 + treatment + senior, offset = log(exposure2),
+            data = roaches, family = poisson)
+stan_glm1 <- stan_glm(y ~ roach1 + treatment + senior, offset = log(exposure2),
+                      data = roaches, family = neg_binomial_2,
+                      prior = normal(0, 2.5),
+                      prior_intercept = normal(0, 5),
+                      seed = 12345,
+                      warmup = 10000,      # Number of warmup iterations per chain
+                      iter = 20000,        # Total iterations per chain (warmup + sampling)
+                      thin = 1,
+                      chains = 4)           # Thinning rate)
+res_m<-as.matrix(stan_glm1)
+lines(density(res_m[,"reciprocal_dispersion"]),col="orange",lwd=3)
+
+
+
+
+
+
 

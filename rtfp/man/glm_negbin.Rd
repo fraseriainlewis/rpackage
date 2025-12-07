@@ -2,24 +2,54 @@
 % Please edit documentation in R/neg_bin.R
 \name{glm_negbin}
 \alias{glm_negbin}
-\title{Add together two numbers}
+\title{Fit Bayesian Negative Binomial Additive model using Tensorflow}
 \usage{
 glm_negbin(thedata = NULL)
 }
 \arguments{
-\item{thedata}{data.frame of the data to fit to the model}
+\item{thedata}{data.frame of the data to fit to the model - must be the dataset given in the example}
 }
 \value{
-currently nothing
+a list of matrices of MCMC output, one member of the list for each estimated parameter, and each column in the matrix is the output of one chain. The number of columns in the matrix is the number of chains used. This is currently hardcoded. See function source.
 }
 \description{
-A short description...
+A short description here. See the example below, currently this function fits the same negative binomial regression model as given in the rstanarm example. The data set is passed and the rest of the function is currently hard coded to this example, using one of the tensorflow probability samplers. The function is written in python and called via reticulate which also brings the MCMC sample data into R. The code is simple starting point for expansion. The same function could be written in Rstudio tfprobability library, but needs considerable care on the broadcasting.
 }
 \examples{
 \dontrun{
 library(rstanarm)
 data(roaches)
 roaches$roach1<-roaches$roach1/100;# manual
-glm_negbin(thedata=roaches)
+samples<-glm_negbin(thedata=roaches)
+## Trace plots for the reciprocal dispersion parameter
+phi_m<-samples[[5]] # the fifth parameter in the model, a matrix
+par(mfrow=c(2,2))
+plot(phi_m[,1],type="l",col="green",main="Trace plots")
+lines(phi_m[,2],col="blue")
+lines(phi_m[,3],col="skyblue")
+plot(phi_m[,1],type="l",col="green",main="Trace plots")
+plot(phi_m[,2],type="l",col="blue",main="Trace plots")
+plot(phi_m[,3],type="l",col="skyblue",main="Trace plots")
+
+## Density plots and compare with rstanarm
+par(mfrow=c(1,1))
+plot(density(c(phi_m)),col="skyblue",lwd=2, main="rstanarm (orange) v TF (blue)",
+xlab="Reciprocal Dispersion") # all chains combined
+
+glm1 <- glm(y ~ roach1 + treatment + senior, offset = log(exposure2),
+data = roaches, family = poisson)
+stan_glm1 <- stan_glm(y ~ roach1 + treatment + senior, offset = log(exposure2),
+                      data = roaches, family = neg_binomial_2,
+                      prior = normal(0, 2.5),
+                      prior_intercept = normal(0, 5),
+                      seed = 12345,
+                      warmup = 10000,      # Number of warmup iterations per chain
+                      iter = 20000,        # Total iterations per chain (warmup + sampling)
+                      thin = 1,
+                      chains = 4)           # Thinning rate)
+ res_m<-as.matrix(stan_glm1)
+ lines(density(res_m[,"reciprocal_dispersion"]),col="orange",lwd=2)
+
+
 }
 }

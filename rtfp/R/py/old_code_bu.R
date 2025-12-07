@@ -1,3 +1,26 @@
+### old code - archive
+
+#' Add together two numbers
+#'
+#' @description A short description...
+#' @param thedata data.frame of the data to fit to the model
+#' @returns currently nothing
+#' @examples
+#' \dontrun{
+#' library(rstanarm)
+#' data(roaches)
+#' roaches$roach1<-roaches$roach1/100;# manual
+#' glm_negbin_dep(thedata=roaches)
+#' }
+#' @export
+glm_negbin_dep<-function(thedata=NULL) {
+  #data_l=thedata # local copy inside frame otherwise python cant find it
+  #assign("data_l", data_l, envir = .GlobalEnv)
+  py$data<-r_to_py(thedata)
+  #py$data<-thedata # this is needed as explicitly passes argument into py
+
+  bigstring<-r"(
+
 import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
@@ -6,50 +29,23 @@ import numpy as np
 import pandas as pd
 import time
 
-data=pd.read_csv('roaches.csv')
-data.roach1=data.roach1/100;# manual fix special case - should be done in passed data
-
-rows, columns = data.shape
-
+#data=r.data_l
 y_data=tf.convert_to_tensor(data.iloc[:,0], dtype = tf.float32)
 roach_data=tf.convert_to_tensor(data.iloc[:,1], dtype = tf.float32)
 trt_data=tf.convert_to_tensor(data.iloc[:,2], dtype = tf.float32)
 snr_data=tf.convert_to_tensor(data.iloc[:,3], dtype = tf.float32)
-
-X=tf.convert_to_tensor(data.iloc[:,[1,2,3]],dtype=tf.float32)
-X=tf.concat([tf.ones([rows,1],dtype=tf.float32), X], axis=1)
-
-exposure_data=tf.math.log(tf.expand_dims(tf.convert_to_tensor(data.iloc[:,4],dtype=tf.float32),axis=-1))
-#print(exposure_data)
-X=tf.concat([X,exposure_data], axis=1)
-
-
-beta_expos=tf.convert_to_tensor(1.0,dtype=tf.float32) # dummy
-
-#print(f"This is the design matrix {X}")
-#print(f"This is the expo dummy {beta_expos}")
-#exit(1)
+exposure_data=tf.convert_to_tensor(data.iloc[:,4], dtype = tf.float32)
 
 def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
     """Function to create the observed Normal distribution."""
-    #alpha_e = tf.expand_dims(alpha, -1)  # (3, 1)
-    #beta_roach_e = tf.expand_dims(beta_roach, -1)    # (3, 1)
-    #beta_treatment_e = tf.expand_dims(beta_treatment, -1)    # (3, 1)
-    #beta_senior_e = tf.expand_dims(beta_senior, -1)    # (3, 1)
-    #beta_expos_expanded = tf.expand_dims(1.0, -1)
-    B=tf.stack([alpha,beta_roach,beta_treatment,beta_senior,beta_expos])
-    #print(B._shape_as_list())
-    logmu=tf.linalg.matvec(X,B) 
-    
-    #logmu = alpha_expanded + beta_roach_expanded * roach_data + beta_treatment_expanded * trt_data + beta_senior_expanded * snr_data +tf.math.log(exposure_data)
+    alpha_expanded = tf.expand_dims(alpha, -1)  # (3, 1)
+    beta_roach_expanded = tf.expand_dims(beta_roach, -1)    # (3, 1)
+    beta_treatment_expanded = tf.expand_dims(beta_treatment, -1)    # (3, 1)
+    beta_senior_expanded = tf.expand_dims(beta_senior, -1)    # (3, 1)
+    beta_expos_expanded = tf.expand_dims(1.0, -1)
 
-    # Add intercept column (column of ones)
-    #ones = tf.ones([n_samples, 1])
-    #X_with_intercept = tf.concat([ones, X], axis=1)  # Shape: [100, 3]
-    #true_params = tf.concat([[true_intercept], true_beta], axis=0)  # Shape: [3]
-    #linear_predictor = tf.linalg.matvec(X_with_intercept, true_params)  # Matrix-vector multiply
+    logmu = alpha_expanded + beta_roach_expanded * roach_data + beta_treatment_expanded * trt_data + beta_senior_expanded * snr_data +tf.math.log(exposure_data)
 
-    #print(f"this is logmu={logmu}")
     phi_expanded = tf.expand_dims(phi, -1)  # (3, 1)
     mu = tf.math.exp(logmu)
     #r = tf$expand_dims(1.0, -1L)/ phi_expanded;  # total_count = 5
@@ -58,7 +54,6 @@ def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
     prob = phi_expanded/(phi_expanded+mu)
     #prob<-(phi_expanded)/(mu+phi_expanded)
     # Create distribution for observations
-    #print(f"this is prob={prob}")
     return(tfd.Independent(
         #tfd_normal(loc = mu, scale = sigma_expanded),
         #mu = exp(mu)
@@ -69,27 +64,30 @@ def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
         tfd.NegativeBinomial(total_count = phi_expanded, probs = 1-prob),
         reinterpreted_batch_ndims = 1
     ))
-    
-   
+
+
 
 # APPROACH 1. Define the joint distribution without matrix mult
-model = tfd.JointDistributionSequentialAutoBatched([
+model = tfd.JointDistributionSequential([
   tfd.Normal(loc=0., scale=5., name="alpha"),  # # Intercept (alpha)
   tfd.Normal(loc=0., scale=2.5, name="beta_roach"),  # # Slope (beta_roach1)
   tfd.Normal(loc=0., scale=2.5, name="beta_treatment"),  # # Intercept (alpha)
   tfd.Normal(loc=0., scale=2.5, name="beta_senior"),  # # Slope (beta_roach1)
-  tfd.Exponential(rate=1., name="phi"), 
+  tfd.Exponential(rate=1., name="phi"),
   make_observed_dist
 ])
 
 # Approach 1.
 tf.random.set_seed(9999)
+#a=model.sample()
+#print(model)
+#a=model.sample()
 
 def log_prob_fn(alpha, beta_roach,beta_treatment,beta_senior,phi):
   """Unnormalized target density as a function of states."""
   return model.log_prob((
       alpha, beta_roach,beta_treatment,beta_senior,phi, y_data))
-   
+
 def neg_log_prob_fn(pars):
     alpha=pars[[0]]
     beta_roach=pars[[1]]
@@ -99,27 +97,22 @@ def neg_log_prob_fn(pars):
     """Unnormalized target density as a function of states."""
     return -model.log_prob((
       alpha, beta_roach,beta_treatment,beta_senior,phi, y_data))
-     
-         
-print(f" one example = {log_prob_fn(0.1,0.2,0.3,0.5,0.1)}")
 
+
+print(log_prob_fn(0.1,0.2,0.3,0.5,0.1))
 start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)
-print(neg_log_prob_fn(start))  
-print(f" second example = {log_prob_fn(0.22,0.2,0.3,0.5,0.1)}")
+print(neg_log_prob_fn(start))
 
-#exit(1)   
-   
 #### get starting values by find MLE
 if(True):
     start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)  # Starting point for the search.
     optim_results = tfp.optimizer.nelder_mead_minimize(neg_log_prob_fn,
-                 initial_vertex=start, func_tolerance=1e-08,max_iterations=100)
-                 
+                 initial_vertex=start, func_tolerance=1e-04,max_iterations=1000)
+
     print(optim_results.initial_objective_values)
     print(optim_results.objective_value)
     print(optim_results.position)
 
-#exit(1)   
 # bijector to map contrained parameters to real
 unconstraining_bijectors = [
     tfb.Identity(),
@@ -127,11 +120,11 @@ unconstraining_bijectors = [
     tfb.Identity(),
     tfb.Identity(),
     tfb.Exp()
-] 
- 
-num_results=1000 
-num_burnin_steps=100
- 
+]
+
+num_results=1000
+num_burnin_steps=1000
+
 sampler = tfp.mcmc.TransformedTransitionKernel(
     tfp.mcmc.NoUTurnSampler(
         target_log_prob_fn=log_prob_fn,
@@ -147,7 +140,7 @@ adaptive_sampler = tfp.mcmc.DualAveragingStepSizeAdaptation(
 
 istate = optim_results.position
 #print(initial_state)
-#exit(1)
+
 print("here initial_state")
 #print(initial_state)
 
@@ -158,7 +151,7 @@ print("here initial_state")
 #               tf.constant([-0.76],dtype = tf.float32),
 #               tf.constant([-0.33],dtype = tf.float32),
 #               tf.constant([0.27],dtype = tf.float32)]
-               
+
 #current_state=[tf.constant([initial_state[[0]].numpy()],dtype = tf.float32),
 #               tf.constant([initial_state[[1]].numpy()],dtype = tf.float32),
 #               tf.constant([initial_state[[2]].numpy()],dtype = tf.float32),
@@ -174,10 +167,9 @@ current_state = [tf.expand_dims(tf.repeat(istate[0],repeats=n_chains,axis=-1),ax
                  ]
 print("current state")
 print(current_state)
-#exit(1)
 # 3. Add a new dimension and then repeat
 # First, reshape from (3,) to (3, 1)
-#input_expanded = tf.expand_dims(initial_state, axis=-1) 
+#input_expanded = tf.expand_dims(initial_state, axis=-1)
 #print(f"Expanded Shape: {input_expanded.shape}\n") # Shape is (3, 1)
 
 # Now, repeat the values 3 times along the new last axis (axis=-1)
@@ -213,7 +205,7 @@ print(current_state)
 @tf.function(autograph=False, jit_compile=False)
 def do_sampling():
   return tfp.mcmc.sample_chain(
-      kernel=sampler,
+      kernel=adaptive_sampler,
       current_state=current_state,
       num_results=num_results,
       num_burnin_steps=num_burnin_steps,
@@ -224,11 +216,14 @@ samples, kernel_results = do_sampling()
 t1 = time.time()
 print("Inference ran in {:.2f}s.".format(t1-t0))
 
-samples2 = list(map(lambda x: tf.squeeze(x).numpy(), samples))
-
 #print(samples)
 #print(kernel_results.shape)
 
+)"
 
+py_run_string(bigstring)
+# this create output as "samples"
+# Clean up global environment
+#rm(data_l, envir = .GlobalEnv)
 
-
+}
