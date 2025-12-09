@@ -102,7 +102,7 @@ cat("got=",py$a,"\n")
 #'                       warmup = 10000,      # Number of warmup iterations per chain
 #'                       iter = 20000,        # Total iterations per chain (warmup + sampling)
 #'                       thin = 1,
-#'                       chains = 4)           # Thinning rate)
+#'                       chains = 2)           # Thinning rate)
 #'  res_m<-as.matrix(stan_glm1)
 #'  lines(density(res_m[,"reciprocal_dispersion"]),col="orange",lwd=2)
 #'
