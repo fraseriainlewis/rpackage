@@ -78,7 +78,8 @@ cat("got=",py$a,"\n")
 #' library(rstanarm)
 #' data(roaches)
 #' roaches$roach1<-roaches$roach1/100;# manual
-#' samples<-glm_negbin(thedata=roaches)
+#' samples<-glm_negbin(y ~ roach1 + treatment + senior + offset(log(exposure2)),
+#' data = roaches)
 #' ## Trace plots for the reciprocal dispersion parameter
 #' phi_m<-samples[[5]] # the fifth parameter in the model, a matrix
 #' par(mfrow=c(2,2))
@@ -265,8 +266,8 @@ unconstraining_bijectors = [
     tfb.Exp()
 ]
 
-num_results=1000
-num_burnin_steps=100
+num_results=20000
+num_burnin_steps=5000
 
 sampler = tfp.mcmc.TransformedTransitionKernel(
     tfp.mcmc.NoUTurnSampler(
