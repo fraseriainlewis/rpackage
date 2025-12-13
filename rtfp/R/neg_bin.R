@@ -69,7 +69,9 @@ cat("got=",py$a,"\n")
 #' Fit Bayesian Negative Binomial Additive model using Tensorflow
 #'
 #' @description A short description here. See the example below, currently this function fits the same negative binomial regression model as given in the rstanarm example. The data set is passed and the rest of the function is currently hard coded to this example, using one of the tensorflow probability samplers. The function is written in python and called via reticulate which also brings the MCMC sample data into R. The code is simple starting point for expansion. The same function could be written in Rstudio tfprobability library, but needs considerable care on the broadcasting.
-#' @param thedata data.frame of the data to fit to the model - must be the dataset given in the example
+#' @param formula data.frame of the data to fit to the model - must be the dataset given in the example
+#' @param data description
+#' @param priors dddd
 #' @returns a list of matrices of MCMC output, one member of the list for each estimated parameter, and each column in the matrix is the output of one chain. The number of columns in the matrix is the number of chains used. This is currently hardcoded. See function source.
 #' @examples
 #' \dontrun{
@@ -110,13 +112,23 @@ cat("got=",py$a,"\n")
 #' }
 
 #' @export
-glm_negbin<-function(thedata=NULL) {
+glm_negbin<-function(formula=NULL,data=NULL,
+                      priors=NULL) {
 
-  # mf <- model.frame(formula, data = data) # pass including offset
+  mypriorsstring<-r"(
+  tfd.Normal(loc=0., scale=5., name="alpha"),
+  tfd.Normal(loc=0., scale=2.5, name="beta_roach"),
+  tfd.Normal(loc=0., scale=2.5, name="beta_treatment"),
+  tfd.Normal(loc=0., scale=2.5, name="beta_senior"),
+  tfd.Exponential(rate=1., name="phi"))"
+
+  mf <- model.frame(formula=formula, data = data) # pass including offset
   # e.g. y~a+b+offset(log(z)) and this gives df with all relevant variables
-  py$data<-r_to_py(thedata) # this is needed as explicitly passes argument into py
-  #print(thedata)
-  bigstring<-r"(
+  py$data<-r_to_py(mf) # this is needed as explicitly passes argument into py
+  #print(py$data)
+  #return(mf)
+
+  stringpart1<-r"(
 
 import tensorflow as tf
 import tensorflow_probability as tfp
@@ -129,19 +141,24 @@ import time
 rows, columns = data.shape
 
 y_data=tf.convert_to_tensor(data.iloc[:,0], dtype = tf.float32)
-roach_data=tf.convert_to_tensor(data.iloc[:,1], dtype = tf.float32)
-trt_data=tf.convert_to_tensor(data.iloc[:,2], dtype = tf.float32)
-snr_data=tf.convert_to_tensor(data.iloc[:,3], dtype = tf.float32)
+#roach_data=tf.convert_to_tensor(data.iloc[:,1], dtype = tf.float32)
+#trt_data=tf.convert_to_tensor(data.iloc[:,2], dtype = tf.float32)
+#snr_data=tf.convert_to_tensor(data.iloc[:,3], dtype = tf.float32)
 
-X=tf.convert_to_tensor(data.iloc[:,[1,2,3]],dtype=tf.float32)
+X=tf.convert_to_tensor(data.iloc[:,1:],dtype=tf.float32)
+#print(X)
+#exit(1)
 X=tf.concat([tf.ones([rows,1],dtype=tf.float32), X], axis=1)
 
-exposure_data=tf.math.log(tf.expand_dims(tf.convert_to_tensor(data.iloc[:,4],dtype=tf.float32),axis=-1))
+#exposure_data=tf.math.log(tf.expand_dims(tf.convert_to_tensor(data.iloc[:,4],dtype=tf.float32),axis=-1))
 
-X=tf.concat([X,exposure_data], axis=1)
+#X=tf.concat([X,exposure_data], axis=1)
 
 beta_expos=tf.convert_to_tensor(1.0,dtype=tf.float32) # dummy
 
+)"
+
+  stringpart2<-r"(
 def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
     """Function to create the observed Normal distribution."""
     #alpha_expanded = tf.expand_dims(alpha, -1)  # (3, 1)
@@ -175,35 +192,56 @@ def make_observed_dist(phi, beta_senior,beta_treatment, beta_roach,alpha):
         reinterpreted_batch_ndims = 1
     ))
 
+)"
 
-# Define the joint distribution without matrix mult
+  stringpart3<-r"(
 model = tfd.JointDistributionSequentialAutoBatched([
-  tfd.Normal(loc=0., scale=5., name="alpha"),  # # Intercept (alpha)
-  tfd.Normal(loc=0., scale=2.5, name="beta_roach"),  # # Slope (beta_roach1)
-  tfd.Normal(loc=0., scale=2.5, name="beta_treatment"),  # # Intercept (alpha)
-  tfd.Normal(loc=0., scale=2.5, name="beta_senior"),  # # Slope (beta_roach1)
-  tfd.Exponential(rate=1., name="phi"),
+  )"
+
+  #tfd.Normal(loc=0., scale=5., name="alpha"),  # # Intercept (alpha)
+  #tfd.Normal(loc=0., scale=2.5, name="beta_roach"),  # # Slope (beta_roach1)
+  #tfd.Normal(loc=0., scale=2.5, name="beta_treatment"),  # # Intercept (alpha)
+  #tfd.Normal(loc=0., scale=2.5, name="beta_senior"),  # # Slope (beta_roach1)
+  #tfd.Exponential(rate=1., name="phi"),
+
+  ## mypriorsstring in HERE
+
+  cumstring<-paste(stringpart1,stringpart2,stringpart3,mypriorsstring,",",sep="")
+
+  stringpart4<-r"(
   make_observed_dist
 ])
 
 tf.random.set_seed(99999)
 
-def log_prob_fn(alpha, beta_roach,beta_treatment,beta_senior,phi):
+)"
+
+  varstring<-r"(alpha, beta_roach,beta_treatment,beta_senior,phi)"
+
+  stringpart5<-glue('
+def log_prob_fn({varstring}):
   """Unnormalized target density as a function of states."""
   return model.log_prob((
-      alpha, beta_roach,beta_treatment,beta_senior,phi, y_data))
+    {varstring}, y_data))
 
-def neg_log_prob_fn(pars):
+  ',.trim=FALSE)
+
+  varstring2<-r"(
     alpha=pars[[0]]
     beta_roach=pars[[1]]
     beta_treatment=pars[[2]]
     beta_senior=pars[[3]]
-    phi=pars[[4]]
+    phi=pars[[4]])"
+
+  stringpart6<-glue('
+def neg_log_prob_fn(pars):{varstring2}
     """Unnormalized target density as a function of states."""
     return -model.log_prob((
-      alpha, beta_roach,beta_treatment,beta_senior,phi, y_data))
+      {varstring}, y_data))
 
+',.trim=FALSE)
 
+  stringpart7<-r"(
 #print(log_prob_fn(0.1,0.2,0.3,0.5,0.1))
 start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)
 #print(neg_log_prob_fn(start))
@@ -227,8 +265,8 @@ unconstraining_bijectors = [
     tfb.Exp()
 ]
 
-num_results=25000
-num_burnin_steps=5000
+num_results=1000
+num_burnin_steps=100
 
 sampler = tfp.mcmc.TransformedTransitionKernel(
     tfp.mcmc.NoUTurnSampler(
@@ -271,13 +309,10 @@ print("Inference ran in {:.2f}s.".format(t1-t0))
 
 samples = list(map(lambda x: tf.squeeze(x).numpy(), samples))
 
-
-
-
 )"
-
+bigstring<-paste(cumstring,stringpart4,stringpart5,stringpart6,stringpart7,sep="")
+#return(bigstring)
 py_run_string(bigstring)
 
 return(py_to_r(py$samples))
 }
-
