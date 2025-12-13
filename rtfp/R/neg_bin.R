@@ -112,6 +112,8 @@ cat("got=",py$a,"\n")
 #' @export
 glm_negbin<-function(thedata=NULL) {
 
+  # mf <- model.frame(formula, data = data) # pass including offset
+  # e.g. y~a+b+offset(log(z)) and this gives df with all relevant variables
   py$data<-r_to_py(thedata) # this is needed as explicitly passes argument into py
   #print(thedata)
   bigstring<-r"(
