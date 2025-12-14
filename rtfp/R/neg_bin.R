@@ -149,6 +149,7 @@ glm_negbin<-function(formula=NULL,data=NULL,prior=list(loc=0.,scale=2.5),
   str3<-mystrs$str3
   str4<-mystrs$str4
   str5<-mystrs$str5
+  str6<-mystrs$str6
 
   mypriorsstring<-buildNBpriorstr(mf,prior,prior_intercept,prior_phi)
 
@@ -268,11 +269,8 @@ adaptive_sampler = tfp.mcmc.DualAveragingStepSizeAdaptation(
 istate = optim_results.position
 
 n_chains={n_chains}
-current_state = [tf.expand_dims(tf.repeat(istate[0],repeats=n_chains,axis=-1),axis=-1),
-                 tf.expand_dims(tf.repeat(istate[1],repeats=n_chains,axis=-1),axis=-1),
-                 tf.expand_dims(tf.repeat(istate[2],repeats=n_chains,axis=-1),axis=-1),
-                 tf.expand_dims(tf.repeat(istate[3],repeats=n_chains,axis=-1),axis=-1),
-                 tf.expand_dims(tf.repeat(istate[4],repeats=n_chains,axis=-1),axis=-1)
+current_state = [
+{str6}
                  ]
 
 # Speed up sampling by tracing with `tf.function`.

@@ -32,11 +32,19 @@ buildNBstr<-function(mf){
   #tfb.Identity(),
   #tfb.Exp()
 
+  str6<-paste(paste("         tf.expand_dims(tf.repeat(istate[",0:(length(str3)-1),sep=""),"],repeats=n_chains,axis=-1),axis=-1)",sep="")
+  #tf.expand_dims(tf.repeat(istate[0],repeats=n_chains,axis=-1),axis=-1),
+  #tf.expand_dims(tf.repeat(istate[1],repeats=n_chains,axis=-1),axis=-1),
+  #tf.expand_dims(tf.repeat(istate[2],repeats=n_chains,axis=-1),axis=-1),
+  #tf.expand_dims(tf.repeat(istate[3],repeats=n_chains,axis=-1),axis=-1),
+  #tf.expand_dims(tf.repeat(istate[4],repeats=n_chains,axis=-1),axis=-1)
+
   return(list(str1=paste(str1,collapse=","),
               str2=paste(str2,collapse=","),
               str3=paste(str3,collapse=","),
               str4=paste(str4,collapse="\n"),
-              str5=str5))
+              str5=str5,
+              str6=paste(str6,collapse=",\n")))
 
 
 }
