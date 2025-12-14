@@ -71,7 +71,10 @@ cat("got=",py$a,"\n")
 #' @description A short description here. See the example below, currently this function fits the same negative binomial regression model as given in the rstanarm example. The data set is passed and the rest of the function is currently hard coded to this example, using one of the tensorflow probability samplers. The function is written in python and called via reticulate which also brings the MCMC sample data into R. The code is simple starting point for expansion. The same function could be written in Rstudio tfprobability library, but needs considerable care on the broadcasting.
 #' @param formula data.frame of the data to fit to the model - must be the dataset given in the example
 #' @param data description
-#' @param custompriors dddd
+#' @param prior desc
+#' @param prior_intercept desc
+#' @param prior_phi desc
+#' @param custompriors desc
 #' @returns a list of matrices of MCMC output, one member of the list for each estimated parameter, and each column in the matrix is the output of one chain. The number of columns in the matrix is the number of chains used. This is currently hardcoded. See function source.
 #' @examples
 #' \dontrun{
@@ -117,7 +120,9 @@ cat("got=",py$a,"\n")
 #' }
 
 #' @export
-glm_negbin<-function(formula=NULL,data=NULL,
+glm_negbin<-function(formula=NULL,data=NULL,prior=list(loc=0.,scale=2.5),
+                     prior_intercept=list(loc=0.,scale=5.),
+                     prior_phi=list(rate=1.0),
                       custompriors=NULL) {
 
   # Extract the variables needed, including offset function, from the data
@@ -144,6 +149,7 @@ glm_negbin<-function(formula=NULL,data=NULL,
   tfd.Normal(loc=0., scale=2.5, name="beta_senior"),
   tfd.Exponential(rate=1., name="phi"))"
 
+  mypriorsstring<-buildNBpriorstr(mf,prior,prior_intercept,prior_phi)
 
   # first part of py script - sets libraries and organizes the data passed
   stringpart1<-r"(
@@ -188,11 +194,11 @@ def make_observed_dist({str1}):
 
   stringpart3<-r"(
 model = tfd.JointDistributionSequentialAutoBatched([
-  )"
+)"
 
   ## mypriorsstring in HERE
   ## concat strings so far
-  cumstring<-paste(stringpart1,stringpart2,stringpart3,mypriorsstring,",",sep="")
+  cumstring<-paste(stringpart1,stringpart2,stringpart3,mypriorsstring,sep="")
 
   stringpart4<-r"(
   make_observed_dist

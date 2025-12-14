@@ -44,7 +44,7 @@ buildNBstr<-function(mf){
 #' Extracts specified variables from a dataset based on a model formula.
 #' @param mf mode.frame
 #' @return A list of strings which be glued into python string
-buildNBpriorstr<-function(mf){
+buildNBpriorstr<-function(mf,prior,prior_intercept,prior_phi){
   #return strings needed for negbin tfp model based on formula
   varnames<-names(mf)[-1] #drop response
   noms<-varnames[-grep("offset",varnames)] #drop offset
@@ -54,13 +54,18 @@ buildNBpriorstr<-function(mf){
   str<-str1[length(str1):1]
   # alpha, beta_roach,beta_treatment,beta_senior,phi
 
-  #
+  str_int<-glue('  tfd.Normal(loc={prior_intercept$loc},scale={prior_intercept$scale},name="alpha"),')
+  str_bb<-glue('tfd.Normal(loc={prior$loc},scale={prior$scale},name="')
+  str_b<-paste(paste(paste("  ",str_bb,sep=""),Xs,sep=""),"\"),",sep="")
+  str_phi<-glue('  tfd.Exponential(rate={prior_phi$rate},name="phi"),')
+
+  priorstr<-paste(c(str_int,str_b,str_phi),collapse="\n")
+  #cat(priorstr)
   #tfd.Normal(loc=0., scale=5., name="alpha"),
   #tfd.Normal(loc=0., scale=2.5, name="beta_roach1"),
   #tfd.Normal(loc=0., scale=2.5, name="beta_treatment"),
   #tfd.Normal(loc=0., scale=2.5, name="beta_senior"),
   #tfd.Exponential(rate=1., name="phi"))"
-
+  return(priorstr)
 }
-
 
