@@ -127,7 +127,7 @@ glm_negbin<-function(formula=NULL,data=NULL,
   py$data<-r_to_py(mf) # this is needed as explicitly passes argument into py
 
   #mypriorstring<-buildNBpriorstr(formula);
-  mystrs<-buildNBpriorstr(mf)
+  mystrs<-buildNBstr(mf)
   str1<-mystrs$str1
   str2<-mystrs$str2
   str3<-mystrs$str3
@@ -219,13 +219,13 @@ def neg_log_prob_fn(pars):
 
 ',.trim=FALSE)
 
-mybijectorstr<-r"(
-    tfb.Identity(),
-    tfb.Identity(),
-    tfb.Identity(),
-    tfb.Identity(),
-    tfb.Exp()
-)"
+#mybijectorstr<-r"(
+#    tfb.Identity(),
+#    tfb.Identity(),
+#    tfb.Identity(),
+#    tfb.Identity(),
+#    tfb.Exp()
+#)"
 
   stringpart7<-glue('
 start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)
