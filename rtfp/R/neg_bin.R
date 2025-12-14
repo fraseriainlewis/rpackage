@@ -74,15 +74,20 @@ cat("got=",py$a,"\n")
 #' @param prior desc
 #' @param prior_intercept desc
 #' @param prior_phi desc
-#' @param custompriors desc
-#' @returns a list of matrices of MCMC output, one member of the list for each estimated parameter, and each column in the matrix is the output of one chain. The number of columns in the matrix is the number of chains used. This is currently hardcoded. See function source.
+#' @param num_burnin_steps number of burn-in steps (currently these samples are all discarded)
+#' @param num_results number of samples from each chain for each parameter after burn-in
+#' @param n_chains number of MCMC chains (run in parallel if possible)
+#' @param inits starting guess in simple MLE optimizer, which is used to generate starting position for the chains. Default is one value, and this same value is used as staring guess for all parameters. If a vector is passed which is of the same length of the number of parameters, then this is used as starting guess in the optimizer.
+#' @param custompriors will be used to provide custom prior via a string - not implemented yet
+#' @returns a list of lists. First list is a list of matrices of MCMC output, one member of the list for each estimated parameter, and each column in the matrix is the output of one chain. The number of columns in the matrix is the number of chains used. This is currently hardcoded. See function source. The second list is the python script sent to tensorflow, use cat() to view or write to file.
 #' @examples
 #' \dontrun{
 #' library(rstanarm)
 #' data(roaches)
 #' roaches$roach1<-roaches$roach1/100;# manual
-#' samples<-glm_negbin(y ~ roach1 + treatment + senior + offset(log(exposure2)),
-#' data = roaches)
+#' results_list<-glm_negbin(y ~ roach1 + treatment + senior + offset(log(exposure2)),
+#' data = roaches, num_results=10000,num_burnin_steps=5000,n_chains=3)
+#' samples<-results_list$samples
 #' ## Trace plots for the reciprocal dispersion parameter
 #' phi_m<-samples[[5]] # the fifth parameter in the model, a matrix
 #' par(mfrow=c(2,2))
@@ -117,12 +122,18 @@ cat("got=",py$a,"\n")
 #'  xlab="treatment effect") # all chains combined
 #'  lines(density(res_m[,"treatment"]),col="orange",lwd=2)
 #'
+#'
+#'
 #' }
 
 #' @export
 glm_negbin<-function(formula=NULL,data=NULL,prior=list(loc=0.,scale=2.5),
                      prior_intercept=list(loc=0.,scale=5.),
                      prior_phi=list(rate=1.0),
+                     num_burnin_steps=5000,
+                     num_results=20000,
+                     n_chains=3,
+                     inits=0.1,
                       custompriors=NULL) {
 
   # Extract the variables needed, including offset function, from the data
@@ -138,18 +149,10 @@ glm_negbin<-function(formula=NULL,data=NULL,prior=list(loc=0.,scale=2.5),
   str3<-mystrs$str3
   str4<-mystrs$str4
   str5<-mystrs$str5
-  #str1<- "phi, beta_senior,beta_treatment, beta_roach1,alpha"
-  #str2<- "alpha,beta_roach1,beta_treatment,beta_senior,beta_expos"
-  #str3<- "alpha, beta_roach1,beta_treatment,beta_senior,phi"
-
-  mypriorsstring<-r"(
-  tfd.Normal(loc=0., scale=5., name="alpha"),
-  tfd.Normal(loc=0., scale=2.5, name="beta_roach1"),
-  tfd.Normal(loc=0., scale=2.5, name="beta_treatment"),
-  tfd.Normal(loc=0., scale=2.5, name="beta_senior"),
-  tfd.Exponential(rate=1., name="phi"))"
 
   mypriorsstring<-buildNBpriorstr(mf,prior,prior_intercept,prior_phi)
+
+  myinitsstring<-buildNBinits(mf,inits)
 
   # first part of py script - sets libraries and organizes the data passed
   stringpart1<-r"(
@@ -161,6 +164,10 @@ tfb = tfp.bijectors
 import numpy as np
 import pandas as pd
 import time
+
+# data below is passed via R reticulate e.g., py$data<-r_to_py(model.frame)
+# to run this as standalone script needs data read-in, e.g.
+# data=pd.read_csv('data.csv')
 
 rows, columns = data.shape
 
@@ -225,21 +232,11 @@ def neg_log_prob_fn(pars):
 
 ',.trim=FALSE)
 
-#mybijectorstr<-r"(
-#    tfb.Identity(),
-#    tfb.Identity(),
-#    tfb.Identity(),
-#    tfb.Identity(),
-#    tfb.Exp()
-#)"
-
   stringpart7<-glue('
-start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)
-#print(neg_log_prob_fn(start))
 
 #### get starting values by find MLE
 if(True):
-    start = tf.constant([0.1,0.2,0.3,0.5,0.1],dtype = tf.float32)  # Starting point for the search.
+    start = tf.constant([{myinitsstring}],dtype = tf.float32)  # Starting point for the search.
     optim_results = tfp.optimizer.nelder_mead_minimize(neg_log_prob_fn,
                  initial_vertex=start, func_tolerance=1e-04,max_iterations=1000)
 
@@ -253,8 +250,8 @@ unconstraining_bijectors = [
 
 ]
 
-num_results=20000
-num_burnin_steps=5000
+num_results={num_results}
+num_burnin_steps={num_burnin_steps}
 
 sampler = tfp.mcmc.TransformedTransitionKernel(
     tfp.mcmc.NoUTurnSampler(
@@ -270,7 +267,7 @@ adaptive_sampler = tfp.mcmc.DualAveragingStepSizeAdaptation(
 
 istate = optim_results.position
 
-n_chains=3
+n_chains={n_chains}
 current_state = [tf.expand_dims(tf.repeat(istate[0],repeats=n_chains,axis=-1),axis=-1),
                  tf.expand_dims(tf.repeat(istate[1],repeats=n_chains,axis=-1),axis=-1),
                  tf.expand_dims(tf.repeat(istate[2],repeats=n_chains,axis=-1),axis=-1),
@@ -305,5 +302,5 @@ bigstring<-paste(cumstring,stringpart4,stringpart5,stringpart6,stringpart7,strin
 #return(bigstring)
 py_run_string(bigstring)
 
-return(py_to_r(py$samples))
+return(list(samples=py_to_r(py$samples),py_code=bigstring))
 }

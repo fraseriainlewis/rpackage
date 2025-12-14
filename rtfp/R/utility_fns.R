@@ -1,6 +1,7 @@
 
 
 #' Extracts specified variables from a dataset based on a model formula.
+#'
 #' @param mf mode.frame
 #' @return A list of strings which be glued into python string
 buildNBstr<-function(mf){
@@ -41,7 +42,7 @@ buildNBstr<-function(mf){
 }
 
 
-#' Extracts specified variables from a dataset based on a model formula.
+#' Sets up prior densities using model formula and arguments passed.
 #' @param mf mode.frame
 #' @param prior desc
 #' @param prior_intercept desc
@@ -72,3 +73,23 @@ buildNBpriorstr<-function(mf,prior,prior_intercept,prior_phi){
   return(priorstr)
 }
 
+
+#' Sets initial estimate for starting point of the MCMC sampler
+#' @param mf mode.frame
+#' @param inits desc
+#' @return A list of strings which be glued into python string
+buildNBinits<-function(mf,inits){
+  varnames<-names(mf)[-1] #drop response
+  noms<-varnames[-grep("offset",varnames)] #drop offset
+  Xs<-paste("beta_",noms,sep="") # e.g. alpha, beta_roach,beta_treatment,beta_senior,phi
+  str1<-c("phi",Xs[length(Xs):1],"alpha")
+  str3<-str1[length(str1):1]
+
+  if(length(inits)==length(str3)){ # assumes a full vector of inits passed so are done
+    myinit<-paste(as.character(inits),collapse=",") # make into text
+  } else {
+           # names of all coefs to be estimates
+           myinit<-paste(rep(as.character(inits),length(str3)),collapse=",")
+  }
+  return(myinit)
+}
