@@ -43,6 +43,9 @@ buildNBstr<-function(mf){
 
 #' Extracts specified variables from a dataset based on a model formula.
 #' @param mf mode.frame
+#' @param prior desc
+#' @param prior_intercept desc
+#' @param prior_phi desc
 #' @return A list of strings which be glued into python string
 buildNBpriorstr<-function(mf,prior,prior_intercept,prior_phi){
   #return strings needed for negbin tfp model based on formula
