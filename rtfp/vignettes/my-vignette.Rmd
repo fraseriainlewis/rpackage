@@ -319,7 +319,7 @@ print("Inference ran in {:.2f}s.".format(t1-t0))
 samplesflat = list(map(lambda x: tf.squeeze(x).numpy(), samples))
 print(f" means for mu0, sigma0, mu1, sigma1\n")
 [np.mean(row) for row in samplesflat[0:4]]
-py_to_r(samplesflat) # explicitly send to R
+
 
 ```
 ```{python outputs}
@@ -343,3 +343,5 @@ plot(density(extract(stan_fit_2,"mu_b")$mu_b),main="control intercept mu_b: Stan
 lines(density(c(py$samplesflat[[1]])),col="red")
 
 ```
+
+
