@@ -317,6 +317,9 @@ print("Inference ran in {:.2f}s.".format(t1-t0))
 
 ## there is a trailing dimension of 1 so need to squeeze to get each col is chain, and each row is parameter sample
 samplesflat = list(map(lambda x: tf.squeeze(x).numpy(), samples))
+print(f" means for mu0, sigma0, mu1, sigma1\n")
+[np.mean(row) for row in samplesflat[0:4]]
+py_to_r(samplesflat) # explicitly send to R
 
 ```
 ```{python outputs}
@@ -327,4 +330,16 @@ axes[0][1].plot(samplesflat[1]) # tau_b
 axes[1][0].plot(samplesflat[2]) # mu
 axes[1][1].plot(samplesflat[3]) # tau
 plt.show()
+
+```
+
+```{python stepsize_info}
+results['step_size']
+results['step_size'][0][999] #step size for mu0 at iteration 999+1
+```
+
+```{r compare}
+plot(density(extract(stan_fit_2,"mu_b")$mu_b),main="control intercept mu_b: Stan v TF")
+lines(density(c(py$samplesflat[[1]])),col="red")
+
 ```
