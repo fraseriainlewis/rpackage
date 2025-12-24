@@ -17,6 +17,8 @@ knitr::opts_chunk$set(
 ```{r rsetup}
 library(rtfp)
 library(reticulate)
+library(rstan)
+library(bayesplot)
 ```
 
 ```{r datasets}
@@ -45,9 +47,9 @@ for(i in 1:K){ # for each basket repeat 0-control 1-trt inside this according to
 
 thedata<-data.frame(y,basketID=k_vec,Treatment=z_vec)
 knitr::kable(head(thedata)) 
-py$data<-r_to_py(thedata) # to ensure correct form to python
+py$thedata<-r_to_py(thedata) # to ensure correct form to python
 ```
-## Fit Bayesian Model in Stan - One basket, control/test, binary endpoint
+## 1. Fit Bayesian Model in Stan - One basket, control/test, binary endpoint
 
 ```{r stanmodeldef}
 ### Stan model
@@ -131,8 +133,8 @@ options(mc.cores = parallel::detectCores())
 # simulation inputs as defined by scenarios or on simulated data)
 stan_mod_1 <- stan_model(model_code = BHM_stan_1)
 # Fit model
-nsamps <- 10000       # number of posterior samples (after removing burn-in) per chain
-nburnin <- 1000       # number of burn-in samples to remove at beginning of each chain
+nsamps <- 20000       # number of posterior samples (after removing burn-in) per chain
+nburnin <- 5000       # number of burn-in samples to remove at beginning of each chain
 nchains <- 4          # number of chains
 BHM_pars_1 <- c("mu", "tau","mu_b", "tau_b", "beta","beta_tr")     # parameters to sample
 start_time <- Sys.time()
@@ -143,8 +145,20 @@ end_time - start_time
 post_draws_2 <- as.matrix(stan_fit_2)           # posterior samples of each parameter
 
 ```
+### Summarize results
+```{r stanresults,fig.width=10, fig.height=6, out.width="100%"}
+print(stan_fit_2)
+# Summary statistics for each parameter
+plot(stan_fit_2)
+traceplot(stan_fit_2,"mu")
+stan_dens(stan_fit_2)
+```
+## 2. Fit Bayesian Model in Tensorflow - One basket, control/test, binary endpoint
+This runs python via reticulate with dependencies previously installed as part of the package. Note that the dataset created above has already been passed to python via reticulate r_to_py() function, and it is accessible as a pandas data.frame inside python chunks. 
 
 ```{python pysetup}
+import matplotlib.pyplot as plt
+import seaborn as sns
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -159,6 +173,158 @@ print(sys.executable)
 print(f"TensorFlow version:            {tf.__version__}")
 print(f"TensorFlow Probability version: {tfp.__version__}")
 
-print(f" rows={data.shape[0]} cols={data.shape[1]}")
+print(f" rows={thedata.shape[0]} cols={thedata.shape[1]}")
 
+y_data=tf.convert_to_tensor(thedata.iloc[:,0], dtype = tf.float32)
+k_vec=tf.convert_to_tensor(thedata.iloc[:,1], dtype = tf.float32)
+z_vec=tf.convert_to_tensor(thedata.iloc[:,2], dtype = tf.float32)
+
+print(f"y={z_vec}")
+
+```
+```{python definemodel}
+def make_observed_dist(log_odd_control_and_ratio,sigma1, mu1,sigma0,mu0):
+    beta=tf.stack([mu0 + sigma0 * log_odd_control_and_ratio[0],
+                   mu1 + sigma1 * log_odd_control_and_ratio[1]])
+    return(tfd.Independent(
+        tfd.Bernoulli(logits=beta[0]+beta[1]*z_vec),
+        reinterpreted_batch_ndims = 1
+    ))
+    
+# model is y[i] = Bernoulli(p[i]) where logit(p[i]) = intercept + treatment*z[i]
+model = tfd.JointDistributionSequentialAutoBatched([
+  tfd.Normal(loc=0., scale=2.5, name="mu0"),  # `mu_b` stan above
+  tfd.HalfNormal(scale=2.5, name="sigma0"),  # `tau_b` stan above
+  tfd.Normal(loc=0., scale=2.5, name="mu1"),  # `mu` stan above
+  tfd.HalfNormal(scale=2.5, name="sigma1"),  # `tau` stan above
+  tfd.Normal(loc=tf.zeros(2), scale=tf.ones(2), name="log_odd_control_and_ratio"), ## indep norms, vector
+  make_observed_dist
+])    
+    
+    
+def log_prob_fn(mu0, sigma0, mu1,sigma1, log_odd_control_and_ratio):
+  """Unnormalized target density as a function of states."""
+  return model.log_prob((
+      mu0, sigma0, mu1,sigma1, log_odd_control_and_ratio,y_data))
+ 
+```
+
+### Define the MCMC sampler for Tensorflow
+Use a No-u-turn sampler with dual step size adaptation, no-u-turn is HMC-based and so needs bijectors defined to project into unconstrained space. 
+
+```{python bijectordef}
+unconstraining_bijectors = [
+    tfb.Identity(),
+    tfb.Exp(),
+    tfb.Identity(),
+    tfb.Exp(),
+    tfb.Identity()
+]
+```
+
+#### Step-size Adaptation
+To allow step size to separately adapt for each parameter and in each chain, then the step-size vector must be passed in a specific structure, and the same structure as the initial values. The general structure is the outer dimension should be for the chain, and the rest of the structure needs to map into the state variable structure. 
+
+```{python stepsize}
+# this is to allow step size to be separately adapted for each parameter in the model
+steps=[tf.constant([0.1]),
+        tf.constant([0.8]),
+                   tf.constant([0.5]),
+        tf.constant([0.3]),
+        tf.constant([[1,.4]]) # NOTE - vector
+        ]
+
+# now we replicate this into a structure to account for the fact that we want to run multiple chains
+# as this will force TF to use parallel computation wherever possible
+n_chains=4 ## SETS NUMBER OF CHAINS
+steps_chains = [tf.expand_dims(tf.repeat(steps[0],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.repeat(steps[1],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.repeat(steps[2],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.repeat(steps[3],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.tile(steps[4],[n_chains,1]),axis=1) # starts with shape (1,2) i.e. [[a, b]]
+                 ]
+
+```
+
+Now define the sampler
+```{python samplerdef}
+num_results=20000
+num_burnin_steps=5000
+
+sampler = tfp.mcmc.TransformedTransitionKernel( # inside this the starting conditions must be on original scale
+                                                # i.e. precisions must be >0
+    tfp.mcmc.NoUTurnSampler(
+        target_log_prob_fn=log_prob_fn,
+        max_tree_depth=10,
+        step_size=steps_chains
+                            ),
+    bijector=unconstraining_bijectors
+    )
+
+adaptive_sampler = tfp.mcmc.DualAveragingStepSizeAdaptation(
+    inner_kernel=sampler,
+    num_adaptation_steps=int(0.8 * num_burnin_steps),
+    reduce_fn=tfp.math.reduce_logmeanexp, #default - this determines how to change the step adaptation across chains
+    #reduce_fn=tfp.math.reduce_log_harmonic_mean_exp, # might be better if difficult chains
+    target_accept_prob=tf.cast(0.9, tf.float32))
+
+```
+Now setup the initial conditions. Similar to step-size, must have specific structure.
+```{python initstate}
+istate=[tf.constant([0.0]),
+        tf.constant([0.5]),
+                   tf.constant([0.0]),
+        tf.constant([0.5]),
+        tf.constant([[1.,-1.]])]
+
+current_state = [tf.expand_dims(tf.repeat(istate[0],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.repeat(istate[1],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.repeat(istate[2],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.repeat(istate[3],repeats=n_chains,axis=-1),axis=-1), # starts with shape (1,)
+                 tf.expand_dims(tf.tile(istate[4],[n_chains,1]),axis=1) # starts with shape (1,2) i.e. [[a, b]]
+                 ]
+
+```
+Now do the actual sampling. First setup a trace function which records sample size changes. This function could also compute loglikelihood as all that needs passed is the state vector
+
+```{python trace_fn}
+def trace_fn(state, pkr):
+    return {
+        'sample': state,
+        'step_size': pkr.new_step_size  # <--- THIS extracts the adapted step size
+    }
+
+```
+
+```{python mcmcsampling}
+# Speed up sampling by tracing with `tf.function`.
+@tf.function(autograph=False, jit_compile=True,reduce_retracing=True)
+def do_sampling():
+  return tfp.mcmc.sample_chain(
+      kernel=adaptive_sampler,
+      current_state=current_state,
+      num_results=num_results,
+      num_burnin_steps=num_burnin_steps,
+      trace_fn=trace_fn)
+
+
+t0 = time.time()
+#samples, kernel_results = do_sampling()
+samples, results = do_sampling()
+#[mu0, sigma0, mu1, sigma1,log_odds_control_and_ratio], results = do_sampling() 
+t1 = time.time()
+print("Inference ran in {:.2f}s.".format(t1-t0))
+
+## there is a trailing dimension of 1 so need to squeeze to get each col is chain, and each row is parameter sample
+samplesflat = list(map(lambda x: tf.squeeze(x).numpy(), samples))
+
+```
+```{python outputs}
+fig, axes = plt.subplots(2, 2)#, sharex='col', sharey='col')
+fig.set_size_inches(15, 8)
+axes[0][0].plot(samplesflat[0]) # mu_b
+axes[0][1].plot(samplesflat[1]) # tau_b
+axes[1][0].plot(samplesflat[2]) # mu
+axes[1][1].plot(samplesflat[3]) # tau
+plt.show()
 ```
