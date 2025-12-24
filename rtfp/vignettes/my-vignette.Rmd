@@ -1,0 +1,164 @@
+---
+title: "my-vignette"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{my-vignette}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r rsetup}
+library(rtfp)
+library(reticulate)
+```
+
+```{r datasets}
+### Prepare model inputs
+set.seed(9999)
+# Set up data
+rr_k_ctrl <- c(0.60)       # control response rate for each basket
+rr_k_trt <- c(0.58)        # treatment response rate for each basket
+
+K<-length(rr_k_ctrl)             # number of baskets
+
+N_k_ctrl <- rep(250, K)     # number of control participants per basket
+N_k_trt <- rep(250, K)      # number of treatment participants per basket
+N_k <- N_k_ctrl + N_k_trt         # number of participants per basket (both arms combined)
+N <- sum(N_k)                     # total sample size
+k_vec <- rep(1:K, N_k)            # N x 1 vector of basket indicators (1 to K)
+
+z_vec<-NULL;
+y<-NULL;
+for(i in 1:K){ # for each basket repeat 0-control 1-trt inside this according to the specifc Ns
+  z_vec<-c(z_vec,rep(0:1,c(N_k_ctrl[i],N_k_trt[i]))) # treatment/control indicator
+  y<-c(y,
+       c(rbinom(N_k_ctrl[i],1,rr_k_ctrl[i]), # bernoulli for control
+         rbinom(N_k_trt[i],1,rr_k_trt[i]))) #           for trt
+}
+
+thedata<-data.frame(y,basketID=k_vec,Treatment=z_vec)
+knitr::kable(head(thedata)) 
+py$data<-r_to_py(thedata) # to ensure correct form to python
+```
+## Fit Bayesian Model in Stan - One basket, control/test, binary endpoint
+
+```{r stanmodeldef}
+### Stan model
+  BHM_stan_1 <- "data {
+  int<lower = 0> K;                     // number of baskets (K >= 2)
+  int<lower = 0> N;                     // total number of participants
+  //int<lower = 0, upper = N> N_k[K];     // K x 1 vector of basket sample sizes
+  int<lower = 0, upper = N> N_k;
+  int<lower = 1, upper = K> k_vec[N];   // N x 1 vector of basket indicators
+  int<lower = 0, upper = 1> z_vec[N];   // N x 1 vector of treatment indicators for active treatment arm
+  int<lower = 0, upper = 1> y[N];       // N x 1 vector of binary responses
+  real mu0;                           // mean hyperparameter for normal prior on the log odds for the control arm
+  real<lower = 0> sigma0;             // SD hyperparameter for normal prior on the log odds for the control arm
+  real<lower = 0> tau0;                 // scale hyperparameter for half-normal prior on heirarchal SD (log odds ratio)
+  real mu0_b;                           // mean hyperparameter for normal prior on the log odds for the control arm
+  real<lower = 0> sigma0_b;             // SD hyperparameter for normal prior on the log odds for the control arm
+  real<lower = 0> tau0_b;                 // scale hyperparameter for half-normal prior on heirarchal SD (log odds ratio)
+}
+parameters {
+  matrix[K,2] beta_tr;                  // K x 2 matrix of transformed regression coefficients
+  real mu;                              // scalar of hierarchical mean (log odds ratio)
+  real<lower = 0> tau;                  // scalar of hierarchical SD (log odds ratio)
+  real mu_b;                              // scalar of hierarchical mean (log odds ratio)
+  real<lower = 0> tau_b;                  // scalar of hierarchical SD (log odds ratio)
+
+}
+transformed parameters {
+  matrix[K,2] beta;                     // K x 2 matrix of regression coefficients (without transformation)
+  // Calculate beta coefs using transformed betas (leads to better mixing)
+  for (k in 1:K){
+    beta[k,1] = mu_b + tau_b * beta_tr[k,1];
+    beta[k,2] = mu + tau * beta_tr[k,2];
+  }
+
+}
+model {
+  mu_b ~ normal(mu0_b, sigma0_b);    // vectorized normal priors for hierarchical means (specify SD in normal distn)
+  tau_b ~ normal(0, tau0_b);       // vectorized half-normal priors for hierarchical SDs (specify SD in normal distn)
+  mu ~ normal(mu0, sigma0);    // vectorized normal priors for hierarchical means (specify SD in normal distn)
+  tau ~ normal(0, tau0);       // vectorized half-normal priors for hierarchical SDs (specify SD in normal distn)
+  beta_tr[,1] ~ normal(0, 1);  // vectorized normal prior for the log odds for the control arm
+  beta_tr[,2] ~ normal(0, 1);  // vectorized normal prior for the log odds ratios
+  for (i in 1:N)
+    y[i] ~ bernoulli_logit(beta[k_vec[i], 1] + beta[k_vec[i], 2] * z_vec[i]);
+}
+"
+
+```
+
+```{r stansample}
+# Prior hyperparameters
+mu0 <- 0       # mean hyperparameter of normal prior on log odds for the contorl arm (intercept)
+sigma0 <- 2.5   # SD hyperparameter of normal prior on log odds for the contorl arm (intercept)
+tau0 <- 2.5         # mean hyperparameter of normal prior on hierarchical means (intercept and log odds ratio)
+mu0_b <- 0       # mean hyperparameter of normal prior on log odds for the contorl arm (intercept)
+sigma0_b <- 2.5   # SD hyperparameter of normal prior on log odds for the contorl arm (intercept)
+tau0_b <- 2.5         # mean hyperparameter of normal prior on hierarchical means (intercept and log odds ratio)
+
+
+# Create list with input values for Stan model
+data_input_1 <- list(
+  K = K,                # number of subgroups
+  N = N,                # total sample size
+  N_k = N_k,            # sample size per basket
+  k_vec = k_vec,        # N x 1 vector of subgroup indicators
+  z_vec = z_vec,        # N x 1 vector of active treatment arm indicators
+  y = y,                # N x 1 vector of binary responses
+  mu0 = mu0,            # mean hyperparameter of normal prior on hierarchical means (intercept and log odds ratio)
+  sigma0 = sigma0,      # SD hyperparameter of normal prior on hierarchical means (intercept and log odds ratio)
+  tau0 = tau0,           # scale hyperparameter of half-normal prior on hierarchical SDs (intercept and log odds ratio)
+  mu0_b = mu0_b,            # mean hyperparameter of normal prior on hierarchical means (intercept and log odds ratio)
+  sigma0_b = sigma0_b,      # SD hyperparameter of normal prior on hierarchical means (intercept and log odds ratio)
+  tau0_b = tau0_b           # scale hyperparameter of half-normal prior on hierarchical SDs (intercept and log odds ratio)
+)
+
+
+
+### Compile and fit model
+options(mc.cores = parallel::detectCores())
+# Compile model (only run the line below once for a simulation study - compilation not dependent on any
+# simulation inputs as defined by scenarios or on simulated data)
+stan_mod_1 <- stan_model(model_code = BHM_stan_1)
+# Fit model
+nsamps <- 10000       # number of posterior samples (after removing burn-in) per chain
+nburnin <- 1000       # number of burn-in samples to remove at beginning of each chain
+nchains <- 4          # number of chains
+BHM_pars_1 <- c("mu", "tau","mu_b", "tau_b", "beta","beta_tr")     # parameters to sample
+start_time <- Sys.time()
+stan_fit_2 <- sampling(stan_mod_1, data = data_input_1, pars = BHM_pars_1,
+                       iter = nsamps + nburnin, warmup = nburnin, chains = nchains)
+end_time <- Sys.time()
+end_time - start_time
+post_draws_2 <- as.matrix(stan_fit_2)           # posterior samples of each parameter
+
+```
+
+```{python pysetup}
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import tensorflow_probability as tfp
+from tensorflow_probability import distributions as tfd
+tfb = tfp.bijectors
+import warnings
+import time
+import sys
+print(sys.version)
+print(sys.executable)
+print(f"TensorFlow version:            {tf.__version__}")
+print(f"TensorFlow Probability version: {tfp.__version__}")
+
+print(f" rows={data.shape[0]} cols={data.shape[1]}")
+
+```
