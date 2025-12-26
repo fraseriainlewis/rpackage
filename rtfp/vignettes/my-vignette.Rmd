@@ -168,7 +168,7 @@ import seaborn as sns
 import numpy as np
 import pandas as pd
 import os
-os.environ["KERAS_BACKEND"] = "jax"
+#os.environ["KERAS_BACKEND"] = "jax"
 import keras
 #import bash
 import tensorflow as tf
