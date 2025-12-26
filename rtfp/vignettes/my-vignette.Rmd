@@ -1,12 +1,17 @@
 ---
-title: "my-vignette"
-output: rmarkdown::html_vignette
+title: "Clinical Trial Design and Simulation with Tensorflow: Example 1"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    number_sections: true
 vignette: >
-  %\VignetteIndexEntry{my-vignette}
+  %\VignetteIndexEntry{Clinical Trial Design and Simulation with Tensorflow: Example 1}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
-
+## Bayesian 
+ddd
+### dddd
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -14,13 +19,14 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r rsetup}
+```{r rsetup, include=FALSE}
 library(rtfp)
 library(reticulate)
 library(rstan)
 library(bayesplot)
+#reticulate::py_install("bash") # just a test
 ```
-
+## Dataset 
 ```{r datasets}
 ### Prepare model inputs
 set.seed(9999)
@@ -99,7 +105,7 @@ model {
 
 ```
 
-```{r stansample}
+```{r stansample,echo=TRUE,results='hide'}
 # Prior hyperparameters
 mu0 <- 0       # mean hyperparameter of normal prior on log odds for the contorl arm (intercept)
 sigma0 <- 2.5   # SD hyperparameter of normal prior on log odds for the contorl arm (intercept)
@@ -133,8 +139,8 @@ options(mc.cores = parallel::detectCores())
 # simulation inputs as defined by scenarios or on simulated data)
 stan_mod_1 <- stan_model(model_code = BHM_stan_1)
 # Fit model
-nsamps <- 20000       # number of posterior samples (after removing burn-in) per chain
-nburnin <- 5000       # number of burn-in samples to remove at beginning of each chain
+nsamps <- 1000       # number of posterior samples (after removing burn-in) per chain
+nburnin <- 1000       # number of burn-in samples to remove at beginning of each chain
 nchains <- 4          # number of chains
 BHM_pars_1 <- c("mu", "tau","mu_b", "tau_b", "beta","beta_tr")     # parameters to sample
 start_time <- Sys.time()
@@ -161,6 +167,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import pandas as pd
+import os
+os.environ["KERAS_BACKEND"] = "jax"
+import keras
+#import bash
 import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
@@ -249,15 +259,26 @@ steps_chains = [tf.expand_dims(tf.repeat(steps[0],repeats=n_chains,axis=-1),axis
 Now define the sampler
 ```{python samplerdef}
 num_results=20000
-num_burnin_steps=5000
+num_burnin_steps=10000
+useNuts=False
+useHMC=True
+
+if useNuts:
+  mysampler=tfp.mcmc.NoUTurnSampler(
+                                     target_log_prob_fn=log_prob_fn,
+                                     max_tree_depth=15,
+                                     step_size=steps_chains
+                                     )
+if useHMC:
+  mysampler=tfp.mcmc.HamiltonianMonteCarlo(
+                                     target_log_prob_fn=log_prob_fn,
+                                     num_leapfrog_steps=75,
+                                     step_size=steps_chains
+                                     )                                     
 
 sampler = tfp.mcmc.TransformedTransitionKernel( # inside this the starting conditions must be on original scale
                                                 # i.e. precisions must be >0
-    tfp.mcmc.NoUTurnSampler(
-        target_log_prob_fn=log_prob_fn,
-        max_tree_depth=10,
-        step_size=steps_chains
-                            ),
+    mysampler,
     bijector=unconstraining_bijectors
     )
 
@@ -290,8 +311,9 @@ Now do the actual sampling. First setup a trace function which records sample si
 ```{python trace_fn}
 def trace_fn(state, pkr):
     return {
-        'sample': state,
-        'step_size': pkr.new_step_size  # <--- THIS extracts the adapted step size
+        #'sample': state,
+        'step_size': pkr.new_step_size,  # <--- THIS extracts the adapted step size
+        'logL': log_prob_fn(state[0], state[1],state[2],state[3],state[4])
     }
 
 ```
@@ -305,12 +327,14 @@ def do_sampling():
       current_state=current_state,
       num_results=num_results,
       num_burnin_steps=num_burnin_steps,
+      seed= tf.constant([42, 100], dtype=tf.int32),
       trace_fn=trace_fn)
 
 
 t0 = time.time()
 #samples, kernel_results = do_sampling()
-samples, results = do_sampling()
+samples, traceout = do_sampling()
+#res = do_sampling()
 #[mu0, sigma0, mu1, sigma1,log_odds_control_and_ratio], results = do_sampling() 
 t1 = time.time()
 print("Inference ran in {:.2f}s.".format(t1-t0))
@@ -322,9 +346,18 @@ print(f" means for mu0, sigma0, mu1, sigma1\n")
 
 
 ```
-```{python outputs}
+
+```{python outputs1}
+plt.figure(figsize=(10, 5))
+plt.plot(tf.squeeze(traceout['logL'].numpy()))
+plt.title("log likelihood")
+plt.show()
+
+```
+
+```{python outputs2}
 fig, axes = plt.subplots(2, 2)#, sharex='col', sharey='col')
-fig.set_size_inches(15, 8)
+fig.set_size_inches(10, 5)
 axes[0][0].plot(samplesflat[0]) # mu_b
 axes[0][1].plot(samplesflat[1]) # tau_b
 axes[1][0].plot(samplesflat[2]) # mu
@@ -334,8 +367,8 @@ plt.show()
 ```
 
 ```{python stepsize_info}
-results['step_size']
-results['step_size'][0][999] #step size for mu0 at iteration 999+1
+#traceout['step_size']
+#traceout['step_size'][0][999] #step size for mu0 at iteration 999+1
 ```
 
 ```{r compare}
