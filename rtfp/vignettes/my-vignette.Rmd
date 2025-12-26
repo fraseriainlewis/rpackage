@@ -139,8 +139,8 @@ options(mc.cores = parallel::detectCores())
 # simulation inputs as defined by scenarios or on simulated data)
 stan_mod_1 <- stan_model(model_code = BHM_stan_1)
 # Fit model
-nsamps <- 1000       # number of posterior samples (after removing burn-in) per chain
-nburnin <- 1000       # number of burn-in samples to remove at beginning of each chain
+nsamps <- 10000       # number of posterior samples (after removing burn-in) per chain
+nburnin <- 5000       # number of burn-in samples to remove at beginning of each chain
 nchains <- 4          # number of chains
 BHM_pars_1 <- c("mu", "tau","mu_b", "tau_b", "beta","beta_tr")     # parameters to sample
 start_time <- Sys.time()
@@ -258,18 +258,21 @@ steps_chains = [tf.expand_dims(tf.repeat(steps[0],repeats=n_chains,axis=-1),axis
 
 Now define the sampler
 ```{python samplerdef}
-num_results=20000
-num_burnin_steps=10000
-useNuts=False
-useHMC=True
+useNuts=True
+useHMC=False
 
 if useNuts:
+  num_results=1000
+  num_burnin_steps=1000
   mysampler=tfp.mcmc.NoUTurnSampler(
                                      target_log_prob_fn=log_prob_fn,
                                      max_tree_depth=15,
+                                     max_energy_diff=1000.0,
                                      step_size=steps_chains
                                      )
 if useHMC:
+  num_results=20000
+  num_burnin_steps=10000
   mysampler=tfp.mcmc.HamiltonianMonteCarlo(
                                      target_log_prob_fn=log_prob_fn,
                                      num_leapfrog_steps=75,
@@ -287,7 +290,7 @@ adaptive_sampler = tfp.mcmc.DualAveragingStepSizeAdaptation(
     num_adaptation_steps=int(0.8 * num_burnin_steps),
     reduce_fn=tfp.math.reduce_logmeanexp, #default - this determines how to change the step adaptation across chains
     #reduce_fn=tfp.math.reduce_log_harmonic_mean_exp, # might be better if difficult chains
-    target_accept_prob=tf.cast(0.9, tf.float32))
+    target_accept_prob=tf.cast(0.95, tf.float32))
 
 ```
 Now setup the initial conditions. Similar to step-size, must have specific structure.
@@ -311,8 +314,14 @@ Now do the actual sampling. First setup a trace function which records sample si
 ```{python trace_fn}
 def trace_fn(state, pkr):
     return {
-        #'sample': state,
+        'sample': state, # this is also pkr['all'][0].transformed_state[0]
         'step_size': pkr.new_step_size,  # <--- THIS extracts the adapted step size
+        'all': pkr, #state is also pkr['all'][0].transformed_state[0]
+        #pkr is a named tuple with ._fields = ('transformed_state', 'inner_results')
+        # 'transformed_state is the state
+        # 'inner_results' is diagnostics
+        # ('target_log_prob', 'grads_target_log_prob', 'step_size', 'log_accept_ratio', 'leapfrogs_taken',                     'is_accepted', 'reach_max_depth', 'has_divergence', 'energy', 'seed')
+        'has_divergence':pkr[0].inner_results.has_divergence,
         'logL': log_prob_fn(state[0], state[1],state[2],state[3],state[4])
     }
 
@@ -327,7 +336,7 @@ def do_sampling():
       current_state=current_state,
       num_results=num_results,
       num_burnin_steps=num_burnin_steps,
-      seed= tf.constant([42, 100], dtype=tf.int32),
+      seed= tf.constant([42, 43], dtype=tf.int32),
       trace_fn=trace_fn)
 
 
