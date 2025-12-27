@@ -237,11 +237,11 @@ To allow step size to separately adapt for each parameter and in each chain, the
 
 ```{python stepsize}
 # this is to allow step size to be separately adapted for each parameter in the model
-steps=[tf.constant([0.1]),
-        tf.constant([0.8]),
+steps=[tf.constant([0.5]),
+        tf.constant([0.05]),
                    tf.constant([0.5]),
-        tf.constant([0.3]),
-        tf.constant([[1,.4]]) # NOTE - vector
+        tf.constant([0.05]),
+        tf.constant([[0.5,0.5]]) # NOTE - vector
         ]
 
 # now we replicate this into a structure to account for the fact that we want to run multiple chains
@@ -262,8 +262,8 @@ useNuts=True
 useHMC=False
 
 if useNuts:
-  num_results=1000
-  num_burnin_steps=1000
+  num_results=10000
+  num_burnin_steps=5000
   mysampler=tfp.mcmc.NoUTurnSampler(
                                      target_log_prob_fn=log_prob_fn,
                                      max_tree_depth=15,
@@ -336,7 +336,7 @@ def do_sampling():
       current_state=current_state,
       num_results=num_results,
       num_burnin_steps=num_burnin_steps,
-      seed= tf.constant([42, 43], dtype=tf.int32),
+      seed= tf.constant([9999, 9999], dtype=tf.int32),
       trace_fn=trace_fn)
 
 
